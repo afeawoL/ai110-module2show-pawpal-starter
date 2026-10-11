@@ -5,11 +5,23 @@
 **a. Initial design**
 
 - Briefly describe your initial UML design.
+  - Add an owner and a pet
+  - Add and edit tasks (duration + priority)
+  - Set available time for the day
+  - Generate a daily plan
+  - View the plan with explanations
+
 - What classes did you include, and what responsibilities did you assign to each?
+  - Owner - Stores the owner’s name and daily constraints (available time, start/end hours), holds the list of pets, and provides access to all pets’ tasks.
+  - Pet - Stores pet details (name, species, optional age/needs), holds its own tasks, and handles adding, editing, and removing them.
+  - Task - Stores title, duration, priority, and optional fields (time window, category, recurrence, completed flag); validates its own data and can mark itself complete.
+  - Scheduler - Gathers tasks from the owner’s pets, ranks them by priority with a consistent tiebreaker, fits them into the available time, detects conflicts and overflow, records a reason for each decision, and returns a Plan.
+  - Plan - Stores the scheduled items (task, pet, start/end time, reason) and the unscheduled items with reasons; reports total time used and produces a readable explanation.
 
 **b. Design changes**
 
 - Did your design change during implementation?
+    No.
 - If yes, describe at least one change and why you made it.
 
 ---

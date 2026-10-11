@@ -12,6 +12,7 @@ classDiagram
         +get_pet(pet_name: str) Pet
         +get_all_tasks() list~Task~
         +set_constraints(available_minutes: int, day_start: time, day_end: time) None
+        +daily_budget() int
     }
 
     class Pet {
@@ -50,7 +51,7 @@ classDiagram
 
     class Scheduler {
         +Owner owner
-        +generate_plan() Plan
+        +generate_plan(plan_date: date) Plan
         +rank_tasks(tasks: list~Task~) list~Task~
         +fits(task: Task, time_remaining: int) bool
         +detect_conflicts(items: list~ScheduledItem~) list~str~
@@ -70,6 +71,7 @@ classDiagram
     class Plan {
         +list~ScheduledItem~ scheduled_items
         +list unscheduled_items
+        +list~str~ warnings
         +date date
         +total_time_used() int
         +time_remaining(available_minutes: int) int
