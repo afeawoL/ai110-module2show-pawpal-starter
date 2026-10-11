@@ -10,6 +10,7 @@ classDiagram
         +add_pet(pet: Pet) None
         +remove_pet(pet_name: str) None
         +get_pet(pet_name: str) Pet
+        +filter_tasks(pet_name, completed, category, priority, due_on) list~tuple~
         +get_all_tasks() list~Task~
         +set_constraints(available_minutes: int, day_start: time, day_end: time) None
         +daily_budget() int
@@ -24,22 +25,28 @@ classDiagram
         +add_task(task: Task) None
         +edit_task(task_id: str, **changes) None
         +remove_task(task_id: str) None
+        +complete_task(task_id: str, on_date: date) Task
         +get_tasks(include_completed: bool) list~Task~
     }
 
     class Task {
-        +str id
         +str title
         +int duration_minutes
         +Priority priority
         +str category
         +str preferred_window
+        +time fixed_time
         +str recurrence
+        +date due_date
         +bool completed
+        +date completed_on
+        +str id
         +validate() None
-        +mark_complete() None
+        +is_due(on_date: date) bool
+        +mark_complete(on_date: date) Task
         +update(**changes) None
         +sort_key() tuple
+        +earliest_start() time
     }
 
     class Priority {
@@ -52,10 +59,13 @@ classDiagram
     class Scheduler {
         +Owner owner
         +generate_plan(plan_date: date) Plan
+        +mark_task_complete(task_id: str, on_date: date) Task
         +rank_tasks(tasks: list~Task~) list~Task~
+        +sort_by_time(tasks: list~Task~) list~Task~
         +fits(task: Task, time_remaining: int) bool
+        +check_conflicts(on_date: date) list~str~
         +detect_conflicts(items: list~ScheduledItem~) list~str~
-        +explain_decision(task: Task, outcome: str) str
+        +explain_decision(task: Task, outcome: Outcome, remaining: int) str
     }
 
     class ScheduledItem {
@@ -66,13 +76,32 @@ classDiagram
         +str reason
         +duration() int
         +overlaps(other: ScheduledItem) bool
+        +starting_at(pet: Pet, task: Task, start: time, reason: str)$ ScheduledItem
+        +span() str
+    }
+
+    class FreeTime {
+        +list gaps
+        +int remaining
+        +find(minutes: int, window: str) int
+        +reserve(start: int, minutes: int) None
+    }
+
+    class Outcome {
+        <<enumeration>>
+        SCHEDULED
+        FIXED
+        OUTSIDE_WINDOW
+        NO_TIME
+        NO_SLOT
+        OUTSIDE_DAY
     }
 
     class Plan {
+        +date date
         +list~ScheduledItem~ scheduled_items
         +list unscheduled_items
         +list~str~ warnings
-        +date date
         +total_time_used() int
         +time_remaining(available_minutes: int) int
         +add_scheduled(item: ScheduledItem) None
@@ -83,8 +112,11 @@ classDiagram
     Owner "1" o-- "*" Pet : has
     Pet "1" *-- "*" Task : has
     Task --> Priority : uses
+    Task ..> Task : mark_complete creates next occurrence
     Scheduler --> Owner : reads from
     Scheduler ..> Plan : creates
+    Scheduler ..> FreeTime : tracks gaps with
+    Scheduler ..> Outcome : explains with
     Plan "1" *-- "*" ScheduledItem : contains
     ScheduledItem --> Task : refers to
     ScheduledItem --> Pet : refers to

@@ -36,7 +36,14 @@
 **b. Tradeoffs**
 
 - Describe one tradeoff your scheduler makes.
+  - The scheduler is **greedy and priority-first**: it sorts tasks by priority (then shorter duration, then title) and places each one in the earliest free gap that fits, never going back to rearrange earlier choices. It does not search for the combination of tasks that uses the most of the owner's time.
+  - This means it can leave time unused. In my demo (`main.py`), the owner has 150 minutes. The scheduler places 135 minutes of tasks, then skips the 45-minute Bath ("needs 45 min, only 15 left (30 short)"). An optimal "knapsack" search that only tried to fill the most minutes would instead drop Laser play (20 min, medium) and Brushing (15 min, low) to fit Bath, using 145 minutes. The greedy approach never considers that swap.
+  - Conflicts are handled the same lightweight way: when two fixed-time tasks overlap (checked by full duration, not just matching start times), the scheduler keeps both and adds a warning instead of moving or rejecting one.
 - Why is that tradeoff reasonable for this scenario?
+  - For pet care, priority matters more than filling every minute. The "better" knapsack answer above would give up a medium-priority play session for a low-priority bath, just to use 10 more minutes. Greedy-by-priority guarantees that a higher-priority task is never bumped to make room for a lower-priority one.
+  - It's predictable and easy to explain. Every decision has a one-line reason ("high priority, fixed at 07:30", "5 short"), which an owner can understand at a glance. A knapsack result is harder to justify ("why was Laser play dropped?").
+  - It's fast and simple to test. A day has only around 5–30 tasks, so speed was never the issue, but the greedy logic is short enough that each rule has its own test.
+  - The cost is small and visible: anything skipped is listed with exactly how many minutes it was short, so the owner can raise their available time or lower a priority and regenerate.
 
 ---
 
