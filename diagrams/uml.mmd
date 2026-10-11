@@ -1,15 +1,88 @@
 classDiagram
-    %% Replace the placeholders below with your actual classes, attributes, methods, and relationships.
     %% Keep this file updated so it matches your final implementation.
 
-    class ClassName {
-        +type attribute
-        +method() returnType
+    class Owner {
+        +str name
+        +int available_minutes
+        +time day_start
+        +time day_end
+        +list~Pet~ pets
+        +add_pet(pet: Pet) None
+        +remove_pet(pet_name: str) None
+        +get_pet(pet_name: str) Pet
+        +get_all_tasks() list~Task~
+        +set_constraints(available_minutes: int, day_start: time, day_end: time) None
     }
 
-    class AnotherClass {
-        +type attribute
-        +method() returnType
+    class Pet {
+        +str name
+        +str species
+        +int age
+        +str special_needs
+        +list~Task~ tasks
+        +add_task(task: Task) None
+        +edit_task(task_id: str, **changes) None
+        +remove_task(task_id: str) None
+        +get_tasks(include_completed: bool) list~Task~
     }
 
-    ClassName --> AnotherClass : relationship
+    class Task {
+        +str id
+        +str title
+        +int duration_minutes
+        +Priority priority
+        +str category
+        +str preferred_window
+        +str recurrence
+        +bool completed
+        +validate() None
+        +mark_complete() None
+        +update(**changes) None
+        +sort_key() tuple
+    }
+
+    class Priority {
+        <<enumeration>>
+        HIGH
+        MEDIUM
+        LOW
+    }
+
+    class Scheduler {
+        +Owner owner
+        +generate_plan() Plan
+        +rank_tasks(tasks: list~Task~) list~Task~
+        +fits(task: Task, time_remaining: int) bool
+        +detect_conflicts(items: list~ScheduledItem~) list~str~
+        +explain_decision(task: Task, outcome: str) str
+    }
+
+    class ScheduledItem {
+        +Task task
+        +Pet pet
+        +time start_time
+        +time end_time
+        +str reason
+        +duration() int
+        +overlaps(other: ScheduledItem) bool
+    }
+
+    class Plan {
+        +list~ScheduledItem~ scheduled_items
+        +list unscheduled_items
+        +date date
+        +total_time_used() int
+        +time_remaining(available_minutes: int) int
+        +add_scheduled(item: ScheduledItem) None
+        +add_unscheduled(task: Task, reason: str) None
+        +summary() str
+    }
+
+    Owner "1" o-- "*" Pet : has
+    Pet "1" *-- "*" Task : has
+    Task --> Priority : uses
+    Scheduler --> Owner : reads from
+    Scheduler ..> Plan : creates
+    Plan "1" *-- "*" ScheduledItem : contains
+    ScheduledItem --> Task : refers to
+    ScheduledItem --> Pet : refers to
