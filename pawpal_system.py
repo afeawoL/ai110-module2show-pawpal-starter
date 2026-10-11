@@ -494,13 +494,12 @@ class Scheduler:
         # 1. Fixed-time tasks go exactly where the owner put them; clashes become warnings.
         fixed = [(p, t) for p, t in due if t.fixed_time is not None]
         for pet, task in sorted(fixed, key=lambda pt: (pt[1].fixed_time, pt[1].sort_key())):
-            start = to_minutes(task.fixed_time)
-            if not day_start <= start <= day_end - task.duration_minutes:
+            if not self.within_day(task):
                 skip(task, Outcome.OUTSIDE_DAY)
             elif not self.fits(task, free.remaining):
                 skip(task, Outcome.NO_TIME)
             else:
-                place(pet, task, start, Outcome.FIXED)
+                place(pet, task, to_minutes(task.fixed_time), Outcome.FIXED)
 
         # 2. Flexible tasks by rank: earliest gap in their window, else any gap, else skip.
         flexible = [(p, t) for p, t in due if t.fixed_time is None]
@@ -556,12 +555,19 @@ class Scheduler:
         """Return True if the task fits in the remaining minutes."""
         return task.duration_minutes <= time_remaining
 
+    def within_day(self, task: Task) -> bool:
+        """Return True if a fixed-time task starts and ends inside the owner's day."""
+        start = to_minutes(task.fixed_time)
+        return to_minutes(self.owner.day_start) <= start <= to_minutes(self.owner.day_end) - task.duration_minutes
+
     def check_conflicts(self, on_date: Optional[date] = None) -> list[str]:
         """Lightweight pre-check: warn about overlapping fixed-time tasks without building a plan.
 
-        Only tasks due on `on_date` with a fixed_time are considered, since flexible
-        tasks are placed into free gaps and can't collide. Cheap enough to run on every
-        app rerun, e.g. right after a task is added.
+        Only tasks due on `on_date` with a fixed_time inside the owner's day are
+        considered: flexible tasks are placed into free gaps and can't collide, and
+        tasks outside the day are never scheduled, so they can't clash either (the
+        plan reports those as skipped instead). Cheap enough to run on every app
+        rerun, e.g. right after a task is added.
 
         Args:
             on_date: The day to check; defaults to today.
@@ -572,7 +578,7 @@ class Scheduler:
         proposed = [
             ScheduledItem.starting_at(pet, task, task.fixed_time, "fixed time")
             for pet, task in self.owner.filter_tasks(due_on=on_date or date.today())
-            if task.fixed_time is not None
+            if task.fixed_time is not None and self.within_day(task)
         ]
         return self._overlap_warnings(proposed)
 
@@ -587,8 +593,10 @@ class Scheduler:
         O(n^2) pairs: instant for a day's worth of pet tasks, and much easier to verify
         than a sweep-line algorithm.
         """
+        # Tie-break same-time items by task rank so the wording never depends on input
+        # order (check_conflicts and generate_plan build their lists differently).
         warnings = []
-        for a, b in combinations(sorted(items, key=lambda i: i.start_time), 2):
+        for a, b in combinations(sorted(items, key=lambda i: (i.start_time, i.task.sort_key())), 2):
             if not a.overlaps(b):
                 continue
             if a.pet is b.pet:

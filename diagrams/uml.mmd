@@ -63,6 +63,7 @@ classDiagram
         +rank_tasks(tasks: list~Task~) list~Task~
         +sort_by_time(tasks: list~Task~) list~Task~
         +fits(task: Task, time_remaining: int) bool
+        +within_day(task: Task) bool
         +check_conflicts(on_date: date) list~str~
         +detect_conflicts(items: list~ScheduledItem~) list~str~
         +explain_decision(task: Task, outcome: Outcome, remaining: int) str

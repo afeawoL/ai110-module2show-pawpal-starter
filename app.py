@@ -4,6 +4,15 @@ from pawpal_system import WINDOWS, Owner, Pet, Scheduler, Task
 
 st.set_page_config(page_title="PawPal+", page_icon="🐾", layout="centered")
 
+PRIORITY_BADGE = {"high": "🔴 High", "medium": "🟡 Medium", "low": "🟢 Low"}
+
+
+def when_label(task: Task) -> str:
+    """Show a task's exact time, else its preferred window, else 'Any time'."""
+    if task.fixed_time:
+        return f"{task.fixed_time:%H:%M}"
+    return (task.preferred_window or "any time").capitalize()
+
 st.title("🐾 PawPal+")
 st.markdown("Plan your pets' care for the day based on your time, priorities, and preferences.")
 
@@ -74,6 +83,7 @@ st.divider()
 
 # --- Tasks ---
 st.subheader("Tasks")
+time_conflicts: list[str] = []
 
 if not owner.pets:
     st.caption("Add a pet first, then you can give it tasks.")
@@ -115,8 +125,10 @@ else:
                 st.error(str(e))
 
     # Lightweight conflict check: warn right away about overlapping fixed-time tasks.
-    for warning in Scheduler(owner).check_conflicts():
-        st.warning(f"⚠️ {warning}")
+    scheduler = Scheduler(owner)
+    time_conflicts = scheduler.check_conflicts()
+    for warning in time_conflicts:
+        st.warning(warning, icon="⚠️")
 
     # Mark a task complete; recurring tasks get their next occurrence automatically.
     todo = {task.id: (pet, task) for pet, task in owner.filter_tasks(completed=False)}
@@ -131,36 +143,58 @@ else:
         with col2:
             if st.button("Mark complete"):
                 task = todo[done_id][1]
-                next_task = Scheduler(owner).mark_task_complete(done_id)
+                next_task = scheduler.mark_task_complete(done_id)
                 if next_task:
-                    st.success(f"Done! Next '{task.title}' is due {next_task.due_date:%A, %b %d}.")
+                    st.success(f"Done! Next '{task.title}' is due {next_task.due_date:%A, %b %d}.", icon="🔁")
                 else:
-                    st.success(f"Done: '{task.title}'.")
+                    st.success(f"Done: '{task.title}'.", icon="✅")
 
-    # Filters
-    col1, col2 = st.columns(2)
+    # Filter with Owner.filter_tasks, then sort with the Scheduler.
+    st.markdown("##### Task list")
+    col1, col2, col3, col4 = st.columns(4)
     with col1:
-        pet_filter = st.selectbox("Show pet", ["All pets"] + [p.name for p in owner.pets])
+        pet_filter = st.selectbox("Pet", ["All pets"] + [p.name for p in owner.pets])
     with col2:
-        status_filter = st.selectbox("Show status", ["All", "To do", "Done"])
+        status_filter = st.selectbox("Status", ["All", "To do", "Done"])
+    with col3:
+        priority_filter = st.selectbox("Priority", ["All", "high", "medium", "low"], key="priority_filter")
+    with col4:
+        sort_by = st.selectbox("Sort by", ["Time of day", "Priority", "Date added"])
 
     shown = owner.filter_tasks(
         pet_name=None if pet_filter == "All pets" else pet_filter,
         completed={"All": None, "To do": False, "Done": True}[status_filter],
+        priority=None if priority_filter == "All" else priority_filter,
     )
-    if shown:
-        st.table([
-            {"Pet": pet.name, "Task": task.title, "Minutes": task.duration_minutes,
-             "Priority": task.priority.value, "Category": task.category or "",
-             "When": f"at {task.fixed_time:%H:%M}" if task.fixed_time else (task.preferred_window or "any"),
-             "Repeats": task.recurrence or "", "Due": f"{task.due_date:%b %d}",
-             "Done": "✅" if task.completed else ""}
-            for pet, task in shown
-        ])
+    pet_of = {task.id: pet for pet, task in shown}
+    tasks = [task for _, task in shown]
+    if sort_by == "Time of day":
+        tasks = scheduler.sort_by_time(tasks)
+    elif sort_by == "Priority":
+        tasks = scheduler.rank_tasks(tasks)
+
+    if tasks:
+        st.dataframe(
+            [
+                {"When": when_label(t), "Task": t.title, "Pet": pet_of[t.id].name,
+                 "Priority": PRIORITY_BADGE[t.priority.value], "Minutes": t.duration_minutes,
+                 "Category": (t.category or "").capitalize(), "Repeats": (t.recurrence or "").capitalize(),
+                 "Due": t.due_date, "Done": t.completed}
+                for t in tasks
+            ],
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                "Minutes": st.column_config.NumberColumn(format="%d min"),
+                "Due": st.column_config.DateColumn(format="MMM D"),
+                "Done": st.column_config.CheckboxColumn(),
+            },
+        )
+        st.caption(f"Showing {len(tasks)} of {len(owner.get_all_tasks())} tasks · sorted by {sort_by.lower()}")
     elif owner.get_all_tasks():
-        st.info("No tasks match these filters.")
+        st.info("No tasks match these filters.", icon="🔍")
     else:
-        st.info("No tasks yet. Add one above.")
+        st.info("No tasks yet. Add one above.", icon="📝")
 
 st.divider()
 
@@ -169,34 +203,61 @@ st.subheader("Build Schedule")
 
 if st.button("Generate schedule", type="primary"):
     if not owner.get_all_tasks():
-        st.warning("Add at least one task before generating a schedule.")
+        st.warning("Add at least one task before generating a schedule.", icon="📝")
     elif not owner.filter_tasks(completed=False):
-        st.success("Everything is done. Nothing left to schedule today!")
+        st.success("Everything is done. Nothing left to schedule today!", icon="🎉")
     else:
         plan = Scheduler(owner).generate_plan()
         budget = owner.daily_budget()
+        used = plan.total_time_used()
 
-        st.markdown(f"### Today's Schedule ({plan.date:%A, %B %d})")
+        st.markdown(f"### Today's Schedule · {plan.date:%A, %B %d}")
+
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Scheduled", len(plan.scheduled_items))
+        col2.metric("Skipped", len(plan.unscheduled_items))
+        col3.metric("Time used", f"{used} min")
+        col4.metric("Free", f"{plan.time_remaining(budget)} min")
+        st.progress(min(used / budget, 1.0) if budget else 0.0, text=f"{used} of {budget} budget minutes used")
+
+        # Overall verdict
+        if not plan.unscheduled_items and not plan.warnings:
+            st.success(f"All {len(plan.scheduled_items)} tasks fit with no conflicts.", icon="✅")
+        elif plan.unscheduled_items:
+            st.warning(f"{len(plan.unscheduled_items)} task(s) didn't fit today. See below.", icon="⏳")
 
         if plan.scheduled_items:
-            st.table([
-                {"Time": item.span(),
-                 "Task": item.task.title, "Pet": item.pet.name,
-                 "Minutes": item.duration(), "Why": item.reason}
-                for item in plan.scheduled_items
-            ])
+            st.dataframe(
+                [
+                    {"Time": item.span(), "Task": item.task.title, "Pet": item.pet.name,
+                     "Priority": PRIORITY_BADGE[item.task.priority.value],
+                     "Minutes": item.duration(), "Why": item.reason}
+                    for item in plan.scheduled_items
+                ],
+                hide_index=True,
+                use_container_width=True,
+                column_config={"Minutes": st.column_config.NumberColumn(format="%d min")},
+            )
         else:
-            st.info("Nothing could be scheduled in the time available.")
+            st.info("Nothing could be scheduled in the time available.", icon="🕒")
 
         if plan.unscheduled_items:
-            st.markdown("**Skipped today**")
-            for task, reason in plan.unscheduled_items:
-                st.markdown(f"- {task.title} ({task.duration_minutes} min): {reason}")
+            st.markdown("##### Skipped today")
+            st.dataframe(
+                [
+                    {"Task": task.title, "Priority": PRIORITY_BADGE[task.priority.value],
+                     "Minutes": task.duration_minutes, "Reason": reason}
+                    for task, reason in plan.unscheduled_items
+                ],
+                hide_index=True,
+                use_container_width=True,
+                column_config={"Minutes": st.column_config.NumberColumn(format="%d min")},
+            )
 
-        for warning in plan.warnings:
-            st.warning(warning)
-
-        st.caption(
-            f"Time used: {plan.total_time_used()} / {budget} min "
-            f"({plan.time_remaining(budget)} min free)"
-        )
+        # Time clashes are already shown under Tasks; point to them only if they made it
+        # into the plan, and show the plan's other warnings (windows, duplicates) here.
+        shown_above = [w for w in plan.warnings if w in time_conflicts]
+        if shown_above:
+            st.warning(f"{len(shown_above)} time conflict(s) in this plan. See the Tasks section.", icon="⚠️")
+        for warning in (w for w in plan.warnings if w not in time_conflicts):
+            st.warning(warning, icon="⚠️")

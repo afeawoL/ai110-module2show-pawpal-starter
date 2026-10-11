@@ -223,7 +223,7 @@ def test_overlapping_fixed_tasks_for_different_pets_warn_owner():
 
 
 def test_check_conflicts_same_time_different_pets():
-    owner = make_owner()
+    owner = make_owner(start=time(7, 0))
     owner.get_pet("Mochi").add_task(make_task("Breakfast", 10, fixed_time="07:30"))
     owner.get_pet("Luna").add_task(make_task("Meds", 5, fixed_time="07:30"))
 
@@ -254,6 +254,29 @@ def test_check_conflicts_ignores_back_to_back_done_and_future_tasks():
     mochi.add_task(make_task("Groom", 15, fixed_time="09:00", due_date=DAY + timedelta(days=2)))
 
     assert Scheduler(owner).check_conflicts(DAY) == []
+
+
+def test_check_conflicts_ignores_tasks_outside_the_day():
+    owner = make_owner(start=time(8, 0))
+    owner.get_pet("Mochi").add_task(make_task("Breakfast", 10, fixed_time="07:30"))
+    owner.get_pet("Luna").add_task(make_task("Meds", 5, fixed_time="07:30"))
+    scheduler = Scheduler(owner)
+
+    assert scheduler.check_conflicts(DAY) == []                     # neither can be scheduled...
+    assert len(scheduler.generate_plan(DAY).unscheduled_items) == 2  # ...they're reported as skipped
+
+    owner.set_constraints(240, time(7, 0), time(20, 0))              # widen the day
+    assert len(scheduler.check_conflicts(DAY)) == 1                 # now the clash is real
+
+
+def test_pre_check_and_plan_word_the_same_conflict_identically():
+    # Same start time, added in the opposite order to how the planner ranks them.
+    owner = make_owner(start=time(7, 0))
+    owner.get_pet("Mochi").add_task(make_task("Breakfast", 10, fixed_time="07:30"))
+    owner.get_pet("Luna").add_task(make_task("Meds", 5, fixed_time="07:30"))
+    scheduler = Scheduler(owner)
+
+    assert scheduler.check_conflicts(DAY) == scheduler.generate_plan(DAY).warnings
 
 
 def test_conflicts_return_warnings_instead_of_raising():
