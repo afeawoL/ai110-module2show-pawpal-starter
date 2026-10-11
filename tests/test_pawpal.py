@@ -366,3 +366,181 @@ def test_smaller_task_still_fits_after_larger_one_is_skipped():
 def test_invalid_fixed_time_past_midnight_rejected():
     with pytest.raises(ValueError):
         make_task("Late", 30, fixed_time=time(23, 45))
+
+
+# --- Edge cases: sorting ---
+
+def test_sort_same_exact_time_breaks_tie_by_priority():
+    low = make_task("Alpha", 5, priority="low", fixed_time="08:00")
+    high = make_task("Zeta", 30, priority="high", fixed_time="08:00")
+
+    ordered = Scheduler(make_owner()).sort_by_time([low, high])
+
+    assert [t.title for t in ordered] == ["Zeta", "Alpha"]   # priority beats shorter and alphabetical
+
+
+def test_sort_empty_list_returns_empty():
+    assert Scheduler(make_owner()).sort_by_time([]) == []
+
+
+# --- Edge cases: recurring ---
+
+def test_daily_task_rolls_over_to_new_year():
+    nye = date(2026, 12, 31)
+    walk = make_task("Walk", recurrence="daily", due_date=nye)
+
+    assert walk.mark_complete(nye).due_date == date(2027, 1, 1)
+
+
+def test_weekly_task_crosses_leap_day():
+    feb26 = date(2028, 2, 26)
+    brush = make_task("Brush", recurrence="weekly", due_date=feb26)
+
+    assert brush.mark_complete(feb26).due_date == date(2028, 3, 4)
+
+
+def test_completed_early_next_due_counts_from_due_date():
+    # Due in 3 days but done today: next one is due date + 1, not today + 1,
+    # so finishing early doesn't create a copy due before the original was.
+    early = make_task("Walk", recurrence="daily", due_date=DAY + timedelta(days=3))
+
+    assert early.mark_complete(DAY).due_date == DAY + timedelta(days=4)
+
+
+def test_next_occurrence_keeps_time_window_and_details():
+    meds = make_task("Meds", 5, "high", category="meds", fixed_time="07:30", recurrence="daily")
+    window_walk = make_task("Walk", 30, "medium", preferred_window="evening", recurrence="weekly")
+
+    next_meds, next_walk = meds.mark_complete(DAY), window_walk.mark_complete(DAY)
+
+    assert (next_meds.fixed_time, next_meds.category, next_meds.recurrence) == (time(7, 30), "meds", "daily")
+    assert (next_walk.preferred_window, next_walk.priority) == ("evening", Priority.MEDIUM)
+
+
+# --- Edge cases: empty and boundaries ---
+
+def test_pet_with_no_tasks_gives_empty_plan():
+    owner = make_owner()
+
+    plan = plan_for(owner)
+
+    assert plan.scheduled_items == [] and plan.unscheduled_items == [] and plan.warnings == []
+    assert owner.filter_tasks(pet_name="Mochi") == []
+
+
+def test_owner_with_no_pets_gives_empty_plan():
+    plan = Scheduler(Owner("Jordan", 60)).generate_plan(DAY)
+
+    assert plan.scheduled_items == []
+    assert "Nothing scheduled." in plan.summary()
+
+
+def test_fixed_task_ending_exactly_at_day_end_is_scheduled():
+    owner = make_owner(end=time(20, 0))
+    owner.get_pet("Mochi").add_task(make_task("Last walk", 30, fixed_time="19:30"))
+
+    [item] = plan_for(owner).scheduled_items
+
+    assert item.span() == "19:30-20:00"
+
+
+def test_fixed_task_one_minute_past_day_end_is_skipped():
+    owner = make_owner(end=time(20, 0))
+    owner.get_pet("Mochi").add_task(make_task("Late walk", 31, fixed_time="19:30"))
+
+    plan = plan_for(owner)
+
+    assert plan.scheduled_items == []
+    assert "outside your day" in plan.unscheduled_items[0][1]
+
+
+# --- Priority and budget ---
+
+def test_high_priority_beats_low_when_time_is_short():
+    # The low task is shorter, added first, and first alphabetically, so only
+    # priority can explain the high task winning.
+    owner = make_owner(minutes=30)
+    mochi = owner.get_pet("Mochi")
+    mochi.add_task(make_task("A bath", 10, "low"))
+    mochi.add_task(make_task("Meds", 30, "high"))
+
+    plan = plan_for(owner)
+
+    assert [i.task.title for i in plan.scheduled_items] == ["Meds"]
+    assert [t.title for t, _ in plan.unscheduled_items] == ["A bath"]
+
+
+def test_same_priority_shorter_task_goes_first():
+    owner = make_owner(minutes=30)
+    mochi = owner.get_pet("Mochi")
+    mochi.add_task(make_task("Long play", 20, "medium"))
+    mochi.add_task(make_task("Short play", 15, "medium"))
+
+    plan = plan_for(owner)
+
+    assert [i.task.title for i in plan.scheduled_items] == ["Short play"]
+    assert plan.unscheduled_items[0][1] == "needs 20 min, only 15 left (5 short)"
+
+
+def test_daily_budget_is_smaller_of_minutes_and_day_length():
+    assert Owner("J", 600, time(8, 0), time(10, 0)).daily_budget() == 120   # day is shorter
+    assert Owner("J", 45, time(8, 0), time(20, 0)).daily_budget() == 45     # budget is shorter
+
+
+def test_zero_budget_skips_everything_without_crashing():
+    owner = make_owner(minutes=0)
+    owner.get_pet("Mochi").add_task(make_task("Walk", 10))
+
+    plan = plan_for(owner)
+
+    assert plan.scheduled_items == []
+    assert plan.unscheduled_items[0][1] == "needs 10 min, only 0 left (10 short)"
+
+
+# --- Validation and safe edits ---
+
+def test_update_rolls_back_when_change_is_invalid():
+    task = make_task("Walk", 30, "high")
+
+    with pytest.raises(ValueError):
+        task.update(title="Long walk", duration_minutes=-5)
+
+    assert (task.title, task.duration_minutes) == ("Walk", 30)   # neither field changed
+
+
+def test_update_rejects_unknown_fields_and_id():
+    task = make_task("Walk")
+
+    with pytest.raises(ValueError):
+        task.update(colour="red")
+    with pytest.raises(ValueError):
+        task.update(id="new-id")
+
+
+def test_edit_task_applies_valid_change():
+    pet = Pet("Mochi", "dog")
+    walk = make_task("Walk", 30)
+    pet.add_task(walk)
+
+    pet.edit_task(walk.id, duration_minutes=45, priority="low")
+
+    assert (walk.duration_minutes, walk.priority) == (45, Priority.LOW)
+
+
+def test_edit_or_remove_missing_task_raises_keyerror():
+    pet = Pet("Mochi", "dog")
+
+    with pytest.raises(KeyError):
+        pet.edit_task("missing", title="x")
+    with pytest.raises(KeyError):
+        pet.remove_task("missing")
+
+
+def test_owner_rejects_bad_constraints_and_duplicate_pet_names():
+    owner = make_owner()
+
+    with pytest.raises(ValueError):
+        owner.set_constraints(60, time(18, 0), time(9, 0))       # starts after it ends
+    with pytest.raises(ValueError):
+        owner.add_pet(Pet("MOCHI", "dog"))                       # case-insensitive duplicate
+    assert owner.day_start == time(8, 0)                         # failed change left it alone
